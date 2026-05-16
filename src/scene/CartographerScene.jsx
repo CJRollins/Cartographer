@@ -2,13 +2,23 @@ import { useEffect } from 'react';
 import * as THREE from 'three';
 import { atmoHex, CONN_COLORS } from '../constants.js';
 import { spiritus, fermentum, inter } from '../animancy.js';
+import {
+  boundaryVertices,
+  connectionBoundaryPlacement,
+  connectionKey,
+  placementToBoundaryPoint,
+  projectPointToBoundary,
+} from '../topology.js';
 
 const LABEL_CANVAS_SIZE = 512;
 const CAMERA_ANGLE = {
   top: { phi: 1.56, radius: 14 },
   angle: { phi: 0.8, radius: 12 },
 };
+const MIN_ZOOM_RADIUS = 4;
+const MAX_ZOOM_RADIUS = 75;
 const CURSOR_SELECT_RADIUS = 0.95;
+const SCALE_CHOICES = [1, 2, 5, 10, 20, 50, 100, 200, 500];
 
 function drawArcText(ctx, text, radius, centerAngle, color) {
   const chars = Array.from(text);
@@ -94,7 +104,84 @@ function disposeObjectTree(group) {
   while (group.children.length) group.remove(group.children[0]);
 }
 
-export default function CartographerScene({ mountRef, sceneRef, setSelected, setNodes, setHoverInfo, setCursorInfo }) {
+function gatePlacementForIndex(node, index, nodes, edges) {
+  const placements = Array.isArray(node.boundary?.gatePlacements) ? node.boundary.gatePlacements : [];
+  if (placements[index]) return placements[index];
+
+  const incidentEdges = edges.filter(edge => edge.from === node.id || edge.to === node.id);
+  const edge = incidentEdges[index % Math.max(incidentEdges.length, 1)];
+  if (edge) {
+    const otherId = edge.from === node.id ? edge.to : edge.from;
+    const other = nodes.find(n => n.id === otherId);
+    const placement = connectionBoundaryPlacement(node, other, connectionKey(edge.from, edge.to));
+    if (placement) return placement;
+  }
+
+  const verts = boundaryVertices(node);
+  return { edgeIndex: verts.length ? index % verts.length : 0, t: 0.5, connectionKey: "" };
+}
+
+function positionGateMesh(gate, node, placement) {
+  const verts = boundaryVertices(node);
+  if (!verts.length) return;
+  const edgeIndex = Math.max(0, Math.min(verts.length - 1, Math.round(placement.edgeIndex || 0)));
+  const a = verts[edgeIndex];
+  const b = verts[(edgeIndex + 1) % verts.length];
+  const point = placementToBoundaryPoint(node, placement);
+  const baseY = (Number.isFinite(node.y) ? node.y : 0) + 0.12;
+  gate.position.set(point.x, baseY, point.z);
+  gate.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x);
+}
+
+function createBoundaryObjects(node, color, nodes, edges) {
+  const verts = boundaryVertices(node);
+  if (verts.length < 3) return [];
+  const baseY = (Number.isFinite(node.y) ? node.y : 0) - 0.025;
+  const shape = new THREE.Shape();
+  shape.moveTo(verts[0].x - node.x, verts[0].z - node.z);
+  verts.slice(1).forEach(v => shape.lineTo(v.x - node.x, v.z - node.z));
+  shape.closePath();
+
+  const fill = new THREE.Mesh(
+    new THREE.ShapeGeometry(shape),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide })
+  );
+  fill.rotation.x = -Math.PI / 2;
+  fill.position.set(node.x, baseY, node.z);
+  fill.renderOrder = 0;
+
+  const points = verts.map(v => new THREE.Vector3(v.x, baseY + 0.035, v.z));
+  points.push(points[0].clone());
+  const edge = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.35 })
+  );
+
+  const objects = [fill, edge];
+  if (node.boundary?.walled) {
+    const wall = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points.map(p => p.clone().setY(baseY + 0.18))),
+      new THREE.LineBasicMaterial({ color: 0xd4b66e, transparent: true, opacity: 0.58 })
+    );
+    objects.push(wall);
+  }
+
+  const gates = Number(node.boundary?.gates) || 0;
+  for (let i = 0; i < gates; i++) {
+    const gate = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.08, 0.08),
+      new THREE.MeshBasicMaterial({ color: 0xd4b66e, transparent: true, opacity: 0.8 })
+    );
+    const placement = gatePlacementForIndex(node, i, nodes, edges);
+    positionGateMesh(gate, node, placement);
+    gate.userData = { type: "gate", nodeId: node.id, gateIndex: i, placement };
+    objects.push(gate);
+  }
+
+  return objects;
+}
+
+export default function CartographerScene({ mountRef, sceneRef, setSelected, setNodes, setHoverInfo, setCursorInfo, setMapInfo }) {
   useEffect(() => {
     const el = mountRef.current;
     if (!el) return;
@@ -131,13 +218,14 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
     scene.add(new THREE.Points(dGeo, new THREE.PointsMaterial({ color: 0xb59850, size: 0.04, transparent: true, opacity: 0.2 })));
 
     // ── World group ──
-    let meshMap = {}, lineObjs = [];
+    let meshMap = {}, gateMap = {}, lineObjs = [];
     const worldGroup = new THREE.Group();
     scene.add(worldGroup);
 
     function rebuild(data) {
       disposeObjectTree(worldGroup);
       meshMap = {};
+      gateMap = {};
       lineObjs = [];
 
       // Nodes
@@ -147,6 +235,14 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         const degCount = data.edges.filter(e => e.from === node.id || e.to === node.id).length;
         const baseY = Number.isFinite(node.y) ? node.y : 0;
         const sz = 0.15 + Math.min(degCount * 0.015, 0.08);
+
+        // Boundary
+        createBoundaryObjects(node, col, data.nodes, data.edges).forEach(obj => {
+          worldGroup.add(obj);
+          if (obj.userData?.type === "gate") {
+            gateMap[`${obj.userData.nodeId}:${obj.userData.gateIndex}`] = { mesh: obj, node, gateIndex: obj.userData.gateIndex, placement: obj.userData.placement };
+          }
+        });
 
         // Platform
         const platGeo = new THREE.CylinderGeometry(0.75 + degCount * 0.04, 0.8 + degCount * 0.04, 0.08, 24);
@@ -238,24 +334,45 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       }
     }
 
-    sceneRef.current = { meshMap, pendingRebuild: null, selectedId: null, connectMode: false, connectCallback: null, focusId: null, cameraMode: "angle", cursorHitId: null, _edges: [] };
-
     // ── Camera orbit ──
     let theta = 0, phi = CAMERA_ANGLE.angle.phi, radius = CAMERA_ANGLE.angle.radius, drag = false, lx = 0, ly = 0;
     let gx = 0, gz = 0, tx = 0, tz = 0;
-    let draggingNode = null, dragStart = null;
-    let cursorHitId = null;
+    let draggingNode = null, draggingGate = null, dragStart = null, suppressClick = false;
+    let cursorHitId = null, lastMapInfoKey = "";
     const keys = new Set();
     const cvs = renderer.domElement;
     const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(99, 99);
     const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const groundPt = new THREE.Vector3();
+    const scaleA = new THREE.Vector3();
+    const scaleB = new THREE.Vector3();
+    const resetNorth = () => { theta = 0; };
+
+    sceneRef.current = { meshMap, gateMap, pendingRebuild: null, selectedId: null, connectMode: false, connectCallback: null, focusId: null, cameraMode: "angle", cursorHitId: null, resetNorth, _edges: [] };
 
     // ── Mouse events ──
     cvs.addEventListener("mousemove", e => {
       const r = cvs.getBoundingClientRect();
       mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1;
       mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+
+      if (draggingGate) {
+        const entry = gateMap[`${draggingGate.nodeId}:${draggingGate.gateIndex}`];
+        if (entry) {
+          const nodeY = Number.isFinite(entry.node.y) ? entry.node.y : 0;
+          const gatePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -nodeY);
+          ray.setFromCamera(mouse, camera);
+          if (ray.ray.intersectPlane(gatePlane, groundPt)) {
+            const placement = projectPointToBoundary(entry.node, groundPt);
+            const oldPlacement = entry.placement || {};
+            const nextPlacement = { ...placement, connectionKey: oldPlacement.connectionKey || "" };
+            entry.placement = nextPlacement;
+            entry.mesh.userData.placement = nextPlacement;
+            positionGateMesh(entry.mesh, entry.node, nextPlacement);
+          }
+        }
+        return;
+      }
 
       if (draggingNode) {
         ray.setFromCamera(mouse, camera);
@@ -306,7 +423,18 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
 
     cvs.addEventListener("mousedown", e => {
       lx = e.clientX; ly = e.clientY;
+      const r = cvs.getBoundingClientRect();
+      mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
       ray.setFromCamera(mouse, camera);
+      const gateHits = ray.intersectObjects(Object.values(gateMap).map(g => g.mesh));
+      if (gateHits.length) {
+        const { nodeId, gateIndex } = gateHits[0].object.userData;
+        draggingGate = { nodeId, gateIndex };
+        dragStart = { gate: true };
+        return;
+      }
+
       const targets = Object.values(meshMap).map(m => m.marker);
       const hits = ray.intersectObjects(targets);
       if (hits.length) {
@@ -321,19 +449,44 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
     });
 
     const handleMouseUp = () => {
+      if (draggingGate) {
+        suppressClick = true;
+        const entry = gateMap[`${draggingGate.nodeId}:${draggingGate.gateIndex}`];
+        if (entry) {
+          const placement = entry.placement || entry.mesh.userData.placement;
+          const nodes = Object.values(meshMap).map(m => {
+            if (m.node.id !== draggingGate.nodeId) return { ...m.node };
+            const boundary = { ...(m.node.boundary || {}) };
+            const gatePlacements = Array.isArray(boundary.gatePlacements) ? [...boundary.gatePlacements] : [];
+            gatePlacements[draggingGate.gateIndex] = placement;
+            return { ...m.node, boundary: { ...boundary, gatePlacements } };
+          });
+          setNodes(ns => ns.map(n => {
+            if (n.id !== draggingGate.nodeId) return n;
+            const boundary = { ...(n.boundary || {}) };
+            const gatePlacements = Array.isArray(boundary.gatePlacements) ? [...boundary.gatePlacements] : [];
+            gatePlacements[draggingGate.gateIndex] = placement;
+            return { ...n, boundary: { ...boundary, gatePlacements } };
+          }));
+          sceneRef.current.pendingRebuild = { nodes, edges: sceneRef.current._edges || [] };
+        }
+      }
+
       if (draggingNode && dragStart) {
         const entry = meshMap[draggingNode];
         if (entry && (Math.abs(entry.node.x - dragStart.x) > 0.1 || Math.abs(entry.node.z - dragStart.z) > 0.1)) {
+          suppressClick = true;
           const movedNodes = Object.values(meshMap).map(m => ({ ...m.node }));
           setNodes(ns => ns.map(n => n.id === draggingNode ? { ...n, x: entry.node.x, z: entry.node.z } : n));
           sceneRef.current.pendingRebuild = { nodes: movedNodes, edges: sceneRef.current._edges || [] };
         }
       }
-      draggingNode = null; dragStart = null; drag = false;
+      draggingNode = null; draggingGate = null; dragStart = null; drag = false;
     };
     window.addEventListener("mouseup", handleMouseUp);
 
     cvs.addEventListener("click", () => {
+      if (suppressClick) { suppressClick = false; return; }
       if (draggingNode) return;
       ray.setFromCamera(mouse, camera);
       const targets = Object.values(meshMap).map(m => m.marker);
@@ -354,7 +507,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       }
     });
 
-    cvs.addEventListener("wheel", e => { radius = Math.max(4, Math.min(25, radius + e.deltaY * 0.02)); }, { passive: true });
+    cvs.addEventListener("wheel", e => { radius = Math.max(MIN_ZOOM_RADIUS, Math.min(MAX_ZOOM_RADIUS, radius + e.deltaY * 0.02)); }, { passive: true });
 
     const handleKeyDown = e => {
       const inInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
@@ -407,6 +560,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         rebuild(sceneRef.current.pendingRebuild);
         sceneRef.current._edges = sceneRef.current.pendingRebuild.edges;
         meshMap = sceneRef.current.meshMap = { ...meshMap };
+        gateMap = sceneRef.current.gateMap = { ...gateMap };
         sceneRef.current.pendingRebuild = null;
       }
 
@@ -443,7 +597,6 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       // Camera mode
       const targetMode = CAMERA_ANGLE[sceneRef.current.cameraMode || "angle"] || CAMERA_ANGLE.angle;
       phi = inter(phi, targetMode.phi, 0.08);
-      radius = inter(radius, targetMode.radius, 0.04);
 
       // Camera
       tx += (gx - tx) * 0.04; tz += (gz - tz) * 0.04;
@@ -451,6 +604,26 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       camera.position.y = Math.sin(phi) * radius * 0.6 + 2;
       camera.position.z = tz + Math.cos(theta) * Math.cos(phi) * radius;
       camera.lookAt(tx, 0, tz);
+      camera.updateMatrixWorld();
+
+      // Map readout
+      scaleA.set(tx, 0, tz).project(camera);
+      scaleB.set(tx + 1, 0, tz).project(camera);
+      const pxPerMile = Math.abs(scaleB.x - scaleA.x) * el.clientWidth * 0.5;
+      let scaleMiles = SCALE_CHOICES[0];
+      if (Number.isFinite(pxPerMile) && pxPerMile > 0.001) {
+        const targetPx = 120;
+        scaleMiles = SCALE_CHOICES.reduce((best, value) => (
+          Math.abs(value * pxPerMile - targetPx) < Math.abs(best * pxPerMile - targetPx) ? value : best
+        ), SCALE_CHOICES[0]);
+      }
+      const scalePx = Number.isFinite(pxPerMile) ? Math.max(24, Math.min(180, scaleMiles * pxPerMile)) : 80;
+      const heading = ((theta * 180 / Math.PI) % 360 + 360) % 360;
+      const mapInfoKey = `${radius.toFixed(1)}:${scaleMiles}:${Math.round(scalePx)}:${Math.round(heading)}`;
+      if (mapInfoKey !== lastMapInfoKey) {
+        lastMapInfoKey = mapInfoKey;
+        setMapInfo?.({ zoomMiles: radius, scaleMiles, scalePx, heading });
+      }
 
       // Center cursor hit test
       let nextCursorHit = null;

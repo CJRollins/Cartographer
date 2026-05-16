@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { DEFAULT_TEMPORAL, FONT_SERIF, FONT_MONO, BORDER, PANEL_BG, atmoColor } from './constants.js';
+import { DEFAULT_BOUNDARY, DEFAULT_TEMPORAL, FONT_SERIF, FONT_MONO, BORDER, PANEL_BG, atmoColor } from './constants.js';
 import { makeId, placeNear, resetIdCounter, spatialDistance } from './topology.js';
 import { useHistory } from './useHistory.js';
-import { exportAdventure, importAdventure, saveToStorage, loadFromStorage, normalizeTemporal } from './io.js';
+import { exportAdventure, importAdventure, saveToStorage, loadFromStorage, normalizeBoundary, normalizeTemporal } from './io.js';
 import CartographerScene from './scene/CartographerScene.jsx';
 import AdventureHeader from './panels/AdventureHeader.jsx';
 import SelectedPanel from './panels/SelectedPanel.jsx';
@@ -33,6 +33,7 @@ export default function App() {
   const [hoverInfo, setHoverInfo] = useState(null);
   const [cursorInfo, setCursorInfo] = useState(null);
   const [cameraMode, setCameraMode] = useState("angle");
+  const [mapInfo, setMapInfo] = useState({ zoomMiles: 12, scaleMiles: 5, scalePx: 90, heading: 0 });
 
   // ── Derived ──
   const selectedNode = nodes.find(n => n.id === selected);
@@ -89,6 +90,7 @@ export default function App() {
       notes: "",
       created: now,
       temporal: { ...DEFAULT_TEMPORAL, lastChanged: now },
+      boundary: { ...DEFAULT_BOUNDARY },
     };
     const nn = [...nodes, node];
     const ne = parentId ? [...edges, { from: parentId, to: node.id, type: connType, travelLength: spatialDistance(parent, node) }] : [...edges];
@@ -128,6 +130,17 @@ export default function App() {
     });
     setNodes(nn);
     addLog(`◇ ${nodes.find(n => n.id === id)?.name} spatial placement updated`);
+    sceneRef.current.pendingRebuild = { nodes: nn, edges };
+  }, [nodes, edges, pushHistory]);
+
+  const updateBoundary = useCallback((id, patch) => {
+    pushHistory();
+    const nn = nodes.map(n => n.id === id
+      ? { ...n, boundary: normalizeBoundary({ ...n.boundary, ...patch }) }
+      : n
+    );
+    setNodes(nn);
+    addLog(`▱ ${nodes.find(n => n.id === id)?.name} boundary updated`);
     sceneRef.current.pendingRebuild = { nodes: nn, edges };
   }, [nodes, edges, pushHistory]);
 
@@ -257,7 +270,7 @@ export default function App() {
     <div style={{ width: "100%", height: "100vh", display: "flex", background: "#06040a", overflow: "hidden" }}>
       {/* 3D Scene */}
       <div ref={mountRef} style={{ flex: 1, position: "relative" }}>
-        <CartographerScene mountRef={mountRef} sceneRef={sceneRef} setSelected={setSelected} setNodes={setNodes} setHoverInfo={setHoverInfo} setCursorInfo={setCursorInfo} />
+        <CartographerScene mountRef={mountRef} sceneRef={sceneRef} setSelected={setSelected} setNodes={setNodes} setHoverInfo={setHoverInfo} setCursorInfo={setCursorInfo} setMapInfo={setMapInfo} />
 
         {/* Overlay: title + stats */}
         <div style={{ position: "absolute", top: 12, left: 16, pointerEvents: "none", userSelect: "none" }}>
@@ -266,6 +279,52 @@ export default function App() {
             layer 0 · {nodes.length} loc · {edges.length} conn
             {orphanCount > 0 && ` · ${orphanCount} orphan${orphanCount > 1 ? "s" : ""}`}
             {maxDeg > 0 && ` · hub: ${maxDeg}`}
+          </div>
+        </div>
+
+        {/* Overlay: compass + map scale */}
+        <div style={{
+          position: "absolute", top: 12, right: 16, zIndex: 5,
+          display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8,
+          fontFamily: FONT_MONO, color: "#b59850",
+        }}>
+          <button onClick={() => sceneRef.current.resetNorth?.()} title="Face north"
+            style={{
+              width: 54, height: 54, borderRadius: "50%", cursor: "pointer",
+              border: "1px solid rgba(212,182,110,0.35)", background: "rgba(8,6,10,0.78)",
+              color: "#D4B66E", fontFamily: FONT_MONO, position: "relative",
+              boxShadow: "0 0 18px rgba(0,0,0,0.25)",
+            }}>
+            <span style={{
+              position: "absolute", left: "50%", top: 5, transform: `translateX(-50%) rotate(${-mapInfo.heading}deg)`,
+              transformOrigin: "50% 22px", fontSize: 13, fontWeight: 700,
+            }}>N</span>
+            <span style={{
+              position: "absolute", left: "50%", top: "50%", width: 1, height: 32,
+              background: "rgba(212,182,110,0.7)", transform: `translate(-50%,-50%) rotate(${-mapInfo.heading}deg)`,
+              transformOrigin: "50% 50%",
+            }} />
+            <span style={{ position: "absolute", inset: 8, border: "1px solid rgba(181,152,80,0.18)", borderRadius: "50%" }} />
+          </button>
+          <div style={{
+            background: "rgba(8,6,10,0.78)", border: BORDER, borderRadius: 3,
+            padding: "6px 8px", minWidth: 148,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 9, marginBottom: 5 }}>
+              <span style={{ color: "#5a4e38" }}>ZOOM</span>
+              <span style={{ color: "#D4B66E" }}>{mapInfo.zoomMiles.toFixed(1)} mi</span>
+            </div>
+            <div style={{ fontSize: 8, color: "#5a4e38", marginBottom: 4 }}>MAP KEY</div>
+            <div style={{ width: 180, maxWidth: "100%" }}>
+              <div style={{
+                width: Math.round(mapInfo.scalePx), height: 8,
+                borderLeft: "1px solid #D4B66E", borderRight: "1px solid #D4B66E",
+                borderBottom: "2px solid #D4B66E",
+              }} />
+              <div style={{ width: Math.round(mapInfo.scalePx), textAlign: "center", fontSize: 9, color: "#D4B66E", marginTop: 2 }}>
+                {mapInfo.scaleMiles} mi
+              </div>
+            </div>
           </div>
         </div>
 
@@ -344,7 +403,7 @@ export default function App() {
           node={selectedNode} edges={selectedEdges} nodes={nodes} selected={selected}
           renaming={renaming} setRenaming={setRenaming} renameBuf={renameBuf} setRenameBuf={setRenameBuf}
           onRename={renameNode} onUpdateAtmo={updateAtmo} onUpdateNotes={updateNotes}
-          onUpdateTemporal={updateTemporal} onUpdateSpatial={updateSpatial}
+          onUpdateTemporal={updateTemporal} onUpdateSpatial={updateSpatial} onUpdateBoundary={updateBoundary}
           onEditConnType={editConnType} onRemoveConnection={removeConnection}
           onUpdateConnectionTravel={updateConnectionTravel}
           onSelectNode={setSelected} onStartConnect={startConnect} onConfirmDelete={setConfirmDel}

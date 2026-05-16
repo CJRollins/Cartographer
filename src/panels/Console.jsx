@@ -1,6 +1,6 @@
 import React from 'react';
 import { ATMOS, TEMPORAL_PHASES, FONT_MONO, BORDER } from '../constants.js';
-import { spatialDistance } from '../topology.js';
+import { boundaryVertices, spatialDistance } from '../topology.js';
 
 const SHORTCUTS = [
   "WASD — move map cursor",
@@ -40,6 +40,10 @@ export function Layer0AuditPanel({ nodes, edges }) {
   const placedNodes = nodes.filter(n => Number.isFinite(n.x) && Number.isFinite(n.z));
   const verticalNodes = nodes.filter(n => Number.isFinite(n.y) && Math.abs(n.y) > 0.01);
   const authoredTravelEdges = edges.filter(edge => Number(edge.travelLength) > 0);
+  const boundedNodes = nodes.filter(n => n.boundary?.shape && n.boundary.shape !== "none");
+  const walledNodes = boundedNodes.filter(n => n.boundary?.walled);
+  const gateCount = boundedNodes.reduce((sum, n) => sum + (Number(n.boundary?.gates) || 0), 0);
+  const zoneEdgeCount = boundedNodes.reduce((sum, n) => sum + boundaryVertices(n).length, 0);
   const measuredEdges = edges.map(edge => {
     const from = nodeById.get(edge.from);
     const to = nodeById.get(edge.to);
@@ -74,6 +78,11 @@ export function Layer0AuditPanel({ nodes, edges }) {
     placedNodes.length < nodes.length ? `${nodes.length - placedNodes.length} unplaced node${nodes.length - placedNodes.length === 1 ? "" : "s"}` : null,
     verticalNodes.length === 0 ? "height/depth not authored" : null,
     edges.length && authoredTravelEdges.length < edges.length ? `${edges.length - authoredTravelEdges.length} derived travel length${edges.length - authoredTravelEdges.length === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  const layer2Missing = [
+    boundedNodes.length < nodes.length ? `${nodes.length - boundedNodes.length} unbounded location${nodes.length - boundedNodes.length === 1 ? "" : "s"}` : null,
+    boundedNodes.length && !zoneEdgeCount ? "zone edges unavailable" : null,
+    walledNodes.length && !gateCount ? "walled zones have no gates" : null,
   ].filter(Boolean);
 
   return (
@@ -145,6 +154,27 @@ export function Layer0AuditPanel({ nodes, edges }) {
           </div>
           <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: layer1Missing.length ? "#8c1f18" : "#5a6848", marginTop: 6 }}>
             {layer1Missing.length ? layer1Missing.join(" · ") : "Layer 1 spatial requirements satisfied"}
+          </div>
+        </div>
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: BORDER }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", letterSpacing: ".08em", marginBottom: 5 }}>
+            LAYER 2 · BOUNDARIES
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 6 }}>
+            {[
+              ["shapes", `${boundedNodes.length}/${nodes.length}`],
+              ["edges", zoneEdgeCount],
+              ["walls", walledNodes.length],
+              ["gates", gateCount],
+            ].map(([label, value]) => (
+              <div key={label} style={{ border: BORDER, padding: "4px 5px", borderRadius: 3 }}>
+                <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38" }}>{label}</div>
+                <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#D4B66E" }}>{value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: layer2Missing.length ? "#8c1f18" : "#5a6848", marginTop: 6 }}>
+            {layer2Missing.length ? layer2Missing.join(" · ") : "Layer 2 boundary requirements satisfied"}
           </div>
         </div>
       </div>

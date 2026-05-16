@@ -1,7 +1,9 @@
 import React, { useRef } from 'react';
 import {
   ATMOS,
+  BOUNDARY_SHAPES,
   CONN_TYPES,
+  DEFAULT_BOUNDARY,
   TEMPORAL_CADENCES,
   TEMPORAL_ERAS,
   TEMPORAL_PHASES,
@@ -16,7 +18,7 @@ import { directionBetween, spatialDistance } from '../topology.js';
 export default function SelectedPanel({
   node, edges, nodes, selected,
   renaming, setRenaming, renameBuf, setRenameBuf, onRename,
-  onUpdateAtmo, onUpdateNotes, onUpdateTemporal, onUpdateSpatial, onEditConnType, onRemoveConnection,
+  onUpdateAtmo, onUpdateNotes, onUpdateTemporal, onUpdateSpatial, onUpdateBoundary, onEditConnType, onRemoveConnection,
   onUpdateConnectionTravel,
   onSelectNode, onStartConnect, onConfirmDelete, sceneRef,
 }) {
@@ -25,6 +27,7 @@ export default function SelectedPanel({
 
   const isOrphan = !edges.length;
   const temporal = { ...DEFAULT_TEMPORAL, ...(node.temporal || {}) };
+  const boundary = { ...DEFAULT_BOUNDARY, ...(node.boundary || {}) };
   const elevation = Number.isFinite(node.y) ? node.y : 0;
 
   const btn = (label, action, opts = {}) => (
@@ -113,6 +116,38 @@ export default function SelectedPanel({
         <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: elevation > 0 ? "#5DCAA5" : elevation < 0 ? "#F0997B" : "#5a4e38", marginTop: 4 }}>
           {elevation > 0 ? `height +${elevation.toFixed(1)}` : elevation < 0 ? `depth ${elevation.toFixed(1)}` : "surface level"}
         </div>
+      </div>
+
+      {/* Boundaries */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 4 }}>
+          LAYER 2 · BOUNDARIES
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 66px 54px", gap: 5, alignItems: "end" }}>
+          <label>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 3 }}>SHAPE</div>
+            <select value={boundary.shape} onChange={e => onUpdateBoundary(selected, { shape: e.target.value })}
+              style={{ ...INPUT_STYLE, fontSize: 9, padding: "3px 5px", textTransform: "uppercase" }}>
+              {BOUNDARY_SHAPES.map(shape => <option key={shape} value={shape}>{shape}</option>)}
+            </select>
+          </label>
+          <label>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 3 }}>RADIUS</div>
+            <input type="number" min="0.5" step="0.5" value={Number(boundary.radius).toFixed(1)}
+              onChange={e => onUpdateBoundary(selected, { radius: Number(e.target.value) })}
+              style={{ ...INPUT_STYLE, fontSize: 9, padding: "3px 5px" }} />
+          </label>
+          <label>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 3 }}>GATES</div>
+            <input type="number" min="0" step="1" value={boundary.gates}
+              onChange={e => onUpdateBoundary(selected, { gates: Number(e.target.value) })}
+              style={{ ...INPUT_STYLE, fontSize: 9, padding: "3px 5px" }} />
+          </label>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5, fontFamily: FONT_MONO, fontSize: 9, color: boundary.walled ? "#D4B66E" : "#5a4e38" }}>
+          <input type="checkbox" checked={boundary.walled} onChange={e => onUpdateBoundary(selected, { walled: e.target.checked })} />
+          walled boundary
+        </label>
       </div>
 
       {/* Connections */}

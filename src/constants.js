@@ -25,6 +25,17 @@ export const DEFAULT_TEMPORAL = {
   cadence: "static",
 };
 
+// ═══ BOUNDARY STATE ═══
+export const BOUNDARY_SHAPES = ["none", "triangle", "square", "hex", "octagon"];
+
+export const DEFAULT_BOUNDARY = {
+  shape: "none",
+  radius: 1.6,
+  walled: false,
+  gates: 0,
+  gatePlacements: [],
+};
+
 // ═══ COLOR HELPERS ═══
 export const atmoHex = (a) => ATMOS.find(x => x.id === a)?.hex || 0xb59850;
 export const atmoColor = (a) => ATMOS.find(x => x.id === a)?.color || "#b59850";

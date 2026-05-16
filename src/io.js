@@ -1,8 +1,18 @@
-import { ATMOS, CONN_TYPES, DEFAULT_TEMPORAL, TEMPORAL_CADENCES, TEMPORAL_ERAS, TEMPORAL_PHASES } from './constants.js';
+import {
+  ATMOS,
+  CONN_TYPES,
+  DEFAULT_BOUNDARY,
+  DEFAULT_TEMPORAL,
+  BOUNDARY_SHAPES,
+  TEMPORAL_CADENCES,
+  TEMPORAL_ERAS,
+  TEMPORAL_PHASES,
+} from './constants.js';
 
 const STORAGE_KEY = "cartographer_adventure";
 const VALID_ATMOS = new Set(ATMOS.map(a => a.id));
 const VALID_CONN_TYPES = new Set(CONN_TYPES);
+const VALID_BOUNDARY_SHAPES = new Set(BOUNDARY_SHAPES);
 const VALID_ERAS = new Set(TEMPORAL_ERAS);
 const VALID_PHASES = new Set(TEMPORAL_PHASES);
 const VALID_CADENCES = new Set(TEMPORAL_CADENCES);
@@ -18,6 +28,24 @@ export function normalizeTemporal(temporal = {}) {
     phase: VALID_PHASES.has(temporal.phase) ? temporal.phase : DEFAULT_TEMPORAL.phase,
     cadence: VALID_CADENCES.has(temporal.cadence) ? temporal.cadence : DEFAULT_TEMPORAL.cadence,
     lastChanged: num(temporal.lastChanged, Date.now()),
+  };
+}
+
+export function normalizeBoundary(boundary = {}) {
+  const gatePlacements = Array.isArray(boundary.gatePlacements)
+    ? boundary.gatePlacements.map(gate => ({
+      edgeIndex: Math.max(0, Math.round(num(gate?.edgeIndex, 0))),
+      t: Math.max(0, Math.min(1, num(gate?.t, 0.5))),
+      connectionKey: typeof gate?.connectionKey === "string" ? gate.connectionKey : "",
+    }))
+    : [];
+
+  return {
+    shape: VALID_BOUNDARY_SHAPES.has(boundary.shape) ? boundary.shape : DEFAULT_BOUNDARY.shape,
+    radius: Math.max(0.5, num(boundary.radius, DEFAULT_BOUNDARY.radius)),
+    walled: Boolean(boundary.walled),
+    gates: Math.max(0, Math.round(num(boundary.gates, DEFAULT_BOUNDARY.gates))),
+    gatePlacements,
   };
 }
 
@@ -39,6 +67,7 @@ export function normalizeAdventure(data = {}) {
         notes: typeof node?.notes === "string" ? node.notes : "",
         created: num(node?.created, Date.now()),
         temporal: normalizeTemporal(node?.temporal),
+        boundary: normalizeBoundary(node?.boundary),
       };
     })
     : [];
