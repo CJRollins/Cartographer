@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { FONT_SERIF, FONT_MONO, BORDER, PANEL_BG, atmoColor } from './constants.js';
+import { DEFAULT_TEMPORAL, FONT_SERIF, FONT_MONO, BORDER, PANEL_BG, atmoColor } from './constants.js';
 import { makeId, placeNear, resetIdCounter } from './topology.js';
 import { useHistory } from './useHistory.js';
-import { exportAdventure, importAdventure, saveToStorage, loadFromStorage } from './io.js';
+import { exportAdventure, importAdventure, saveToStorage, loadFromStorage, normalizeTemporal } from './io.js';
 import CartographerScene from './scene/CartographerScene.jsx';
 import AdventureHeader from './panels/AdventureHeader.jsx';
 import SelectedPanel from './panels/SelectedPanel.jsx';
 import CreatePanel from './panels/CreatePanel.jsx';
-import { ShortcutsPanel, ConsolePanel } from './panels/Console.jsx';
+import { Layer0AuditPanel, ShortcutsPanel, ConsolePanel } from './panels/Console.jsx';
 
 export default function App() {
   const mountRef = useRef(null);
@@ -74,7 +74,18 @@ export default function App() {
     pushHistory();
     const parent = parentId ? nodes.find(n => n.id === parentId) : null;
     const pos = placeNear(parent, nodes);
-    const node = { id: makeId(), name, atmosphere: atmo, x: pos.x, y: 0, z: pos.z, notes: "", created: Date.now() };
+    const now = Date.now();
+    const node = {
+      id: makeId(),
+      name,
+      atmosphere: atmo,
+      x: pos.x,
+      y: 0,
+      z: pos.z,
+      notes: "",
+      created: now,
+      temporal: { ...DEFAULT_TEMPORAL, lastChanged: now },
+    };
     const nn = [...nodes, node];
     const ne = parentId ? [...edges, { from: parentId, to: node.id, type: connType }] : [...edges];
     setNodes(nn); setEdges(ne); setSelected(node.id); setNewName("");
@@ -103,6 +114,17 @@ export default function App() {
   const updateNotes = useCallback((id, notes) => {
     setNodes(ns => ns.map(n => n.id === id ? { ...n, notes } : n));
   }, []);
+
+  const updateTemporal = useCallback((id, patch) => {
+    pushHistory();
+    const nn = nodes.map(n => n.id === id
+      ? { ...n, temporal: normalizeTemporal({ ...n.temporal, ...patch, lastChanged: Date.now() }) }
+      : n
+    );
+    setNodes(nn);
+    addLog(`⌁ ${nodes.find(n => n.id === id)?.name} temporal state updated`);
+    sceneRef.current.pendingRebuild = { nodes: nn, edges };
+  }, [nodes, edges, pushHistory]);
 
   const addConnection = useCallback((fromId, toId, type) => {
     if (fromId === toId) return;
@@ -246,6 +268,7 @@ export default function App() {
         {hoverInfo && hoverInfo.id !== selected && (
           <div style={{ position: "absolute", left: hoverInfo.x + 12, top: hoverInfo.y - 30, background: PANEL_BG, border: BORDER, padding: "4px 10px", fontFamily: FONT_MONO, fontSize: 10, color: "#D4B66E", pointerEvents: "none", whiteSpace: "nowrap", borderRadius: 3, zIndex: 5 }}>
             {hoverInfo.name} <span style={{ color: atmoColor(hoverInfo.atmo), fontSize: 9 }}>{hoverInfo.atmo}</span> <span style={{ color: "#5a4e38", fontSize: 8 }}>{hoverInfo.conns}</span>
+            {hoverInfo.temporal && <div style={{ color: "#5a4e38", fontSize: 8, marginTop: 2 }}>{hoverInfo.temporal.era} · {hoverInfo.temporal.phase} · {hoverInfo.temporal.cadence}</div>}
           </div>
         )}
 
@@ -263,6 +286,7 @@ export default function App() {
           node={selectedNode} edges={selectedEdges} nodes={nodes} selected={selected}
           renaming={renaming} setRenaming={setRenaming} renameBuf={renameBuf} setRenameBuf={setRenameBuf}
           onRename={renameNode} onUpdateAtmo={updateAtmo} onUpdateNotes={updateNotes}
+          onUpdateTemporal={updateTemporal}
           onEditConnType={editConnType} onRemoveConnection={removeConnection}
           onSelectNode={setSelected} onStartConnect={startConnect} onConfirmDelete={setConfirmDel}
           sceneRef={sceneRef}
@@ -275,6 +299,7 @@ export default function App() {
           onCreate={createNode} onDeselect={() => setSelected(null)} nameInputRef={nameInputRef}
         />
 
+        <Layer0AuditPanel nodes={nodes} edges={edges} />
         <ShortcutsPanel />
         <ConsolePanel log={log} />
       </div>

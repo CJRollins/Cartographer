@@ -14,6 +14,17 @@ export const CONN_COLORS = {
   descent: 0x8c1f18, river: 0x4a7aaa, bridge: 0xd4b66e, secret: 0x8c1f18, blocked: 0x4a4a4a,
 };
 
+// ═══ TEMPORAL STATE ═══
+export const TEMPORAL_ERAS = ["past", "present", "future", "mythic", "forgotten"];
+export const TEMPORAL_PHASES = ["rising", "stable", "declining", "broken", "hidden"];
+export const TEMPORAL_CADENCES = ["static", "cyclic", "decaying", "escalating"];
+
+export const DEFAULT_TEMPORAL = {
+  era: "present",
+  phase: "stable",
+  cadence: "static",
+};
+
 // ═══ COLOR HELPERS ═══
 export const atmoHex = (a) => ATMOS.find(x => x.id === a)?.hex || 0xb59850;
 export const atmoColor = (a) => ATMOS.find(x => x.id === a)?.color || "#b59850";

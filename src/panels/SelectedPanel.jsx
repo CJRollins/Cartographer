@@ -1,16 +1,28 @@
 import React, { useRef } from 'react';
-import { ATMOS, CONN_TYPES, FONT_SERIF, FONT_MONO, BORDER, INPUT_STYLE } from '../constants.js';
+import {
+  ATMOS,
+  CONN_TYPES,
+  TEMPORAL_CADENCES,
+  TEMPORAL_ERAS,
+  TEMPORAL_PHASES,
+  DEFAULT_TEMPORAL,
+  FONT_SERIF,
+  FONT_MONO,
+  BORDER,
+  INPUT_STYLE,
+} from '../constants.js';
 
 export default function SelectedPanel({
   node, edges, nodes, selected,
   renaming, setRenaming, renameBuf, setRenameBuf, onRename,
-  onUpdateAtmo, onUpdateNotes, onEditConnType, onRemoveConnection,
+  onUpdateAtmo, onUpdateNotes, onUpdateTemporal, onEditConnType, onRemoveConnection,
   onSelectNode, onStartConnect, onConfirmDelete, sceneRef,
 }) {
   const renameRef = useRef(null);
   if (!node) return null;
 
   const isOrphan = !edges.length;
+  const temporal = { ...DEFAULT_TEMPORAL, ...(node.temporal || {}) };
 
   const btn = (label, action, opts = {}) => (
     <button onClick={action} disabled={opts.disabled} style={{
@@ -20,6 +32,15 @@ export default function SelectedPanel({
       color: opts.disabled ? "#3a3530" : opts.danger ? "#8c1f18" : "#b59850",
       fontFamily: FONT_MONO, fontSize: 10, cursor: opts.disabled ? "default" : "pointer", borderRadius: 3,
     }}>{label}</button>
+  );
+  const temporalField = (label, value, options, key) => (
+    <label style={{ display: "block", flex: 1, minWidth: 78 }}>
+      <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 3 }}>{label}</div>
+      <select value={value} onChange={e => onUpdateTemporal(selected, { [key]: e.target.value })}
+        style={{ ...INPUT_STYLE, fontSize: 9, padding: "3px 5px", textTransform: "uppercase" }}>
+        {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+      </select>
+    </label>
   );
 
   return (
@@ -54,6 +75,18 @@ export default function SelectedPanel({
       <textarea value={node.notes || ""} onChange={e => onUpdateNotes(selected, e.target.value)}
         placeholder="Notes..." rows={2}
         style={{ ...INPUT_STYLE, fontSize: 10, resize: "vertical", minHeight: 36 }} />
+
+      {/* Temporal state */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 4 }}>
+          TEMPORAL STATE
+        </div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+          {temporalField("ERA", temporal.era, TEMPORAL_ERAS, "era")}
+          {temporalField("PHASE", temporal.phase, TEMPORAL_PHASES, "phase")}
+          {temporalField("CADENCE", temporal.cadence, TEMPORAL_CADENCES, "cadence")}
+        </div>
+      </div>
 
       {/* Connections */}
       {edges.length > 0 && (

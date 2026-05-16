@@ -1,4 +1,73 @@
+import { ATMOS, CONN_TYPES, DEFAULT_TEMPORAL, TEMPORAL_CADENCES, TEMPORAL_ERAS, TEMPORAL_PHASES } from './constants.js';
+
 const STORAGE_KEY = "cartographer_adventure";
+const VALID_ATMOS = new Set(ATMOS.map(a => a.id));
+const VALID_CONN_TYPES = new Set(CONN_TYPES);
+const VALID_ERAS = new Set(TEMPORAL_ERAS);
+const VALID_PHASES = new Set(TEMPORAL_PHASES);
+const VALID_CADENCES = new Set(TEMPORAL_CADENCES);
+
+function num(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export function normalizeTemporal(temporal = {}) {
+  return {
+    era: VALID_ERAS.has(temporal.era) ? temporal.era : DEFAULT_TEMPORAL.era,
+    phase: VALID_PHASES.has(temporal.phase) ? temporal.phase : DEFAULT_TEMPORAL.phase,
+    cadence: VALID_CADENCES.has(temporal.cadence) ? temporal.cadence : DEFAULT_TEMPORAL.cadence,
+    lastChanged: num(temporal.lastChanged, Date.now()),
+  };
+}
+
+export function normalizeAdventure(data = {}) {
+  const seen = new Set();
+  const nodes = Array.isArray(data.nodes)
+    ? data.nodes.map((node, index) => {
+      const rawId = typeof node?.id === "string" && node.id.trim() ? node.id.trim() : `loc_${index + 1}`;
+      const id = seen.has(rawId) ? `${rawId}_${index + 1}` : rawId;
+      seen.add(id);
+      return {
+        id,
+        name: typeof node?.name === "string" && node.name.trim() ? node.name.trim() : `Location ${index + 1}`,
+        atmosphere: VALID_ATMOS.has(node?.atmosphere) ? node.atmosphere : "spiritus",
+        x: num(node?.x, index * 2),
+        y: num(node?.y, 0),
+        z: num(node?.z, 0),
+        notes: typeof node?.notes === "string" ? node.notes : "",
+        created: num(node?.created, Date.now()),
+        temporal: normalizeTemporal(node?.temporal),
+      };
+    })
+    : [];
+
+  const validNodeIds = new Set(nodes.map(n => n.id));
+  const edgeKeys = new Set();
+  const edges = Array.isArray(data.edges)
+    ? data.edges.reduce((safeEdges, edge) => {
+      if (!validNodeIds.has(edge?.from) || !validNodeIds.has(edge?.to) || edge.from === edge.to) return safeEdges;
+      const key = [edge.from, edge.to].sort().join(":");
+      if (edgeKeys.has(key)) return safeEdges;
+      edgeKeys.add(key);
+      safeEdges.push({
+        from: edge.from,
+        to: edge.to,
+        type: VALID_CONN_TYPES.has(edge?.type) ? edge.type : "path",
+        label: typeof edge?.label === "string" ? edge.label : "",
+      });
+      return safeEdges;
+    }, [])
+    : [];
+
+  return {
+    version: "layer0",
+    name: typeof data.name === "string" && data.name.trim() ? data.name.trim() : "Untitled Adventure",
+    created: typeof data.created === "string" ? data.created : new Date().toISOString(),
+    nodes,
+    edges,
+  };
+}
 
 // ═══ EXPORT ═══
 export function exportAdventure(adventureName, nodes, edges) {
@@ -29,7 +98,7 @@ export function importAdventure(callback) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const data = JSON.parse(ev.target.result);
+        const data = normalizeAdventure(JSON.parse(ev.target.result));
         callback(null, data);
       } catch (err) {
         callback(err, null);
@@ -43,7 +112,7 @@ export function importAdventure(callback) {
 // ═══ LOCAL STORAGE ═══
 export function saveToStorage(adventureName, nodes, edges) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ name: adventureName, nodes, edges }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeAdventure({ name: adventureName, nodes, edges })));
   } catch (e) {
     // Storage full or unavailable — fail silently
   }
@@ -53,7 +122,7 @@ export function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    return normalizeAdventure(JSON.parse(raw));
   } catch (e) {
     return null;
   }

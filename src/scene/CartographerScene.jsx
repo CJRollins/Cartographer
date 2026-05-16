@@ -3,6 +3,92 @@ import * as THREE from 'three';
 import { atmoHex, CONN_COLORS } from '../constants.js';
 import { spiritus, fermentum, inter } from '../animancy.js';
 
+const LABEL_CANVAS_SIZE = 512;
+
+function drawArcText(ctx, text, radius, centerAngle, color) {
+  const chars = Array.from(text);
+  const widths = chars.map(ch => ctx.measureText(ch).width);
+  const totalAngle = widths.reduce((sum, width) => sum + width / radius, 0);
+  let angle = centerAngle - totalAngle / 2;
+
+  chars.forEach((ch, i) => {
+    const charAngle = widths[i] / radius;
+    angle += charAngle / 2;
+
+    ctx.save();
+    ctx.translate(
+      LABEL_CANVAS_SIZE / 2 + Math.cos(angle) * radius,
+      LABEL_CANVAS_SIZE / 2 + Math.sin(angle) * radius
+    );
+    ctx.rotate(angle + Math.PI / 2);
+    ctx.fillStyle = color;
+    ctx.fillText(ch, 0, 0);
+    ctx.restore();
+
+    angle += charAngle / 2;
+  });
+}
+
+function createNodeLabel(name, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_CANVAS_SIZE;
+  canvas.height = LABEL_CANVAS_SIZE;
+  const ctx = canvas.getContext('2d');
+
+  ctx.clearRect(0, 0, LABEL_CANVAS_SIZE, LABEL_CANVAS_SIZE);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 26px ui-monospace, SFMono-Regular, Menlo, monospace';
+
+  const label = String(name || 'Unnamed').toUpperCase();
+  const safeLabel = label.length > 28 ? `${label.slice(0, 25)}...` : label;
+  const arcRadius = 206;
+
+  ctx.shadowColor = 'rgba(6,4,10,0.9)';
+  ctx.shadowBlur = 6;
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(6,4,10,0.9)';
+
+  drawArcText(ctx, safeLabel, arcRadius, -Math.PI / 2, 'rgba(212,182,110,0.9)');
+
+  ctx.shadowBlur = 0;
+  drawArcText(ctx, safeLabel, arcRadius, Math.PI / 2, color);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.15, 2.15), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.renderOrder = 2;
+
+  return mesh;
+}
+
+function disposeMaterial(material) {
+  if (!material) return;
+  const materials = Array.isArray(material) ? material : [material];
+  materials.forEach(mat => {
+    if (mat.map) mat.map.dispose();
+    mat.dispose();
+  });
+}
+
+function disposeObjectTree(group) {
+  group.traverse(obj => {
+    if (obj.geometry) obj.geometry.dispose();
+    disposeMaterial(obj.material);
+  });
+  while (group.children.length) group.remove(group.children[0]);
+}
+
 export default function CartographerScene({ mountRef, sceneRef, setSelected, setNodes, setHoverInfo }) {
   useEffect(() => {
     const el = mountRef.current;
@@ -45,7 +131,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
     scene.add(worldGroup);
 
     function rebuild(data) {
-      while (worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
+      disposeObjectTree(worldGroup);
       meshMap = {};
       lineObjs = [];
 
@@ -72,6 +158,11 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         rim.position.set(node.x, 0, node.z);
         worldGroup.add(rim);
 
+        // Label
+        const label = createNodeLabel(node.name, col.getStyle());
+        label.position.set(node.x, 0.055, node.z);
+        worldGroup.add(label);
+
         // Marker
         const mGeo = new THREE.SphereGeometry(sz, 12, 8);
         const mMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.3, metalness: 0.4, roughness: 0.3 });
@@ -79,7 +170,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         marker.position.set(node.x, 0.4, node.z);
         worldGroup.add(marker);
 
-        meshMap[node.id] = { marker, mat: mMat, plat, platMat, node, isOrphan };
+        meshMap[node.id] = { marker, mat: mMat, plat, platMat, rim, label, node, isOrphan };
       });
 
       // Edges
@@ -164,10 +255,13 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
             entry.marker.position.z = groundPt.z;
             entry.plat.position.x = groundPt.x;
             entry.plat.position.z = groundPt.z;
+            entry.rim.position.x = groundPt.x;
+            entry.rim.position.z = groundPt.z;
+            entry.label.position.x = groundPt.x;
+            entry.label.position.z = groundPt.z;
             entry.node.x = groundPt.x;
             entry.node.z = groundPt.z;
           }
-          sceneRef.current.pendingRebuild = { nodes: Object.values(meshMap).map(m => m.node), edges: sceneRef.current._edges || [] };
         }
         return;
       }
@@ -190,6 +284,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
           const rc = cvs.getBoundingClientRect();
           setHoverInfo({
             name: n.name, atmo: n.atmosphere, id: n.id,
+            temporal: n.temporal,
             conns: (sceneRef.current._edges || []).filter(ed => ed.from === n.id || ed.to === n.id).length,
             x: e.clientX - rc.left, y: e.clientY - rc.top,
           });
@@ -215,15 +310,18 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       drag = true;
     });
 
-    window.addEventListener("mouseup", () => {
+    const handleMouseUp = () => {
       if (draggingNode && dragStart) {
         const entry = meshMap[draggingNode];
         if (entry && (Math.abs(entry.node.x - dragStart.x) > 0.1 || Math.abs(entry.node.z - dragStart.z) > 0.1)) {
+          const movedNodes = Object.values(meshMap).map(m => ({ ...m.node }));
           setNodes(ns => ns.map(n => n.id === draggingNode ? { ...n, x: entry.node.x, z: entry.node.z } : n));
+          sceneRef.current.pendingRebuild = { nodes: movedNodes, edges: sceneRef.current._edges || [] };
         }
       }
       draggingNode = null; dragStart = null; drag = false;
-    });
+    };
+    window.addEventListener("mouseup", handleMouseUp);
 
     cvs.addEventListener("click", () => {
       if (draggingNode) return;
@@ -249,14 +347,17 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
     cvs.addEventListener("wheel", e => { radius = Math.max(4, Math.min(25, radius + e.deltaY * 0.02)); }, { passive: true });
 
     // Touch support
-    cvs.addEventListener("touchstart", e => { if (e.touches.length) { drag = true; lx = e.touches[0].clientX; ly = e.touches[0].clientY; } }, { passive: true });
-    window.addEventListener("touchend", () => { drag = false; });
-    window.addEventListener("touchmove", e => {
+    const handleTouchStart = e => { if (e.touches.length) { drag = true; lx = e.touches[0].clientX; ly = e.touches[0].clientY; } };
+    const handleTouchEnd = () => { drag = false; };
+    const handleTouchMove = e => {
       if (!drag || !e.touches.length) return;
       theta -= (e.touches[0].clientX - lx) * 0.005;
       phi = Math.max(0.1, Math.min(1.3, phi - (e.touches[0].clientY - ly) * 0.005));
       lx = e.touches[0].clientX; ly = e.touches[0].clientY;
-    }, { passive: true });
+    };
+    cvs.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchend", handleTouchEnd);
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
 
     // ── Animation loop ──
     const clock = new THREE.Clock();
@@ -287,18 +388,27 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
 
       // Node animation
       const selId = sceneRef.current.selectedId;
-      Object.entries(meshMap).forEach(([id, { marker, mat, node }]) => {
+      Object.entries(meshMap).forEach(([id, { marker, mat, rim, node }]) => {
         if (!node) return;
+        const cadence = node.temporal?.cadence || "static";
+        const phase = node.temporal?.phase || "stable";
         let ei = 0.2;
         if (node.atmosphere === "spiritus") ei = 0.25 + spiritus(t, 0.2, 0.12);
         else if (node.atmosphere === "fermentum") ei = 0.22;
         else if (node.atmosphere === "pulsus") ei = 0.15 + Math.max(0, spiritus(t, 0.08, 0.2));
         else ei = 0.05;
+        if (cadence === "cyclic") ei += Math.max(0, spiritus(t, 0.16, 0.08));
+        else if (cadence === "decaying") ei *= 0.72 + spiritus(t, 0.04, 0.06);
+        else if (cadence === "escalating") ei += Math.max(0, spiritus(t, 0.32, 0.14));
         if (id === selId) {
           if (node.atmosphere === "fermentum") ei = 0.5 + fermentum(t, 1.0) * 0.06;
           else ei = Math.max(ei, 0.6 + spiritus(t, 0.8, 0.2));
         }
         mat.emissiveIntensity = ei;
+        if (rim?.material) {
+          const targetOpacity = phase === "hidden" ? 0.08 : phase === "broken" ? 0.48 : phase === "declining" ? 0.28 : phase === "rising" ? 0.34 : 0.2;
+          rim.material.opacity = inter(rim.material.opacity, id === selId ? Math.max(targetOpacity, 0.45) : targetOpacity, 0.05);
+        }
         if (!draggingNode || draggingNode !== id) {
           marker.position.y = 0.4 + spiritus(t + node.x, 0.12, 0.02);
         }
@@ -326,9 +436,14 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
 
     return () => {
       renderer.setAnimationLoop(null);
+      disposeObjectTree(worldGroup);
+      scene.remove(worldGroup);
       renderer.dispose();
       if (cvs.parentNode) cvs.parentNode.removeChild(cvs);
       window.removeEventListener("resize", onR);
+      window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("touchend", handleTouchEnd);
+      window.removeEventListener("touchmove", handleTouchMove);
     };
   }, []);
 
