@@ -4,6 +4,11 @@ import { atmoHex, CONN_COLORS } from '../constants.js';
 import { spiritus, fermentum, inter } from '../animancy.js';
 
 const LABEL_CANVAS_SIZE = 512;
+const CAMERA_ANGLE = {
+  top: { phi: 1.56, radius: 14 },
+  angle: { phi: 0.8, radius: 12 },
+};
+const CURSOR_SELECT_RADIUS = 0.95;
 
 function drawArcText(ctx, text, radius, centerAngle, color) {
   const chars = Array.from(text);
@@ -89,7 +94,7 @@ function disposeObjectTree(group) {
   while (group.children.length) group.remove(group.children[0]);
 }
 
-export default function CartographerScene({ mountRef, sceneRef, setSelected, setNodes, setHoverInfo }) {
+export default function CartographerScene({ mountRef, sceneRef, setSelected, setNodes, setHoverInfo, setCursorInfo }) {
   useEffect(() => {
     const el = mountRef.current;
     if (!el) return;
@@ -229,12 +234,14 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       }
     }
 
-    sceneRef.current = { meshMap, pendingRebuild: null, selectedId: null, connectMode: false, connectCallback: null, focusId: null, _edges: [] };
+    sceneRef.current = { meshMap, pendingRebuild: null, selectedId: null, connectMode: false, connectCallback: null, focusId: null, cameraMode: "angle", cursorHitId: null, _edges: [] };
 
     // ── Camera orbit ──
-    let theta = 0, phi = 0.5, radius = 12, drag = false, lx = 0, ly = 0;
+    let theta = 0, phi = CAMERA_ANGLE.angle.phi, radius = CAMERA_ANGLE.angle.radius, drag = false, lx = 0, ly = 0;
     let gx = 0, gz = 0, tx = 0, tz = 0;
     let draggingNode = null, dragStart = null;
+    let cursorHitId = null;
+    const keys = new Set();
     const cvs = renderer.domElement;
     const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(99, 99);
     const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -268,7 +275,6 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
 
       if (drag) {
         theta -= (e.clientX - lx) * 0.005;
-        phi = Math.max(0.1, Math.min(1.3, phi - (e.clientY - ly) * 0.005));
         lx = e.clientX; ly = e.clientY;
         return;
       }
@@ -346,13 +352,40 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
 
     cvs.addEventListener("wheel", e => { radius = Math.max(4, Math.min(25, radius + e.deltaY * 0.02)); }, { passive: true });
 
+    const handleKeyDown = e => {
+      const inInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
+      if (inInput || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const navKeys = ["w", "a", "s", "d", "Shift", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"];
+      if (!navKeys.includes(key)) return;
+      e.preventDefault();
+
+      if (key === "Enter") {
+        const id = sceneRef.current.cursorHitId;
+        if (!id) return;
+        if (sceneRef.current.connectMode) {
+          sceneRef.current.connectCallback?.(id);
+        } else {
+          setSelected(id);
+          const hit = meshMap[id];
+          if (hit) { gx = hit.node.x; gz = hit.node.z; }
+        }
+        return;
+      }
+
+      keys.add(key);
+    };
+    const handleKeyUp = e => keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
     // Touch support
     const handleTouchStart = e => { if (e.touches.length) { drag = true; lx = e.touches[0].clientX; ly = e.touches[0].clientY; } };
     const handleTouchEnd = () => { drag = false; };
     const handleTouchMove = e => {
       if (!drag || !e.touches.length) return;
       theta -= (e.touches[0].clientX - lx) * 0.005;
-      phi = Math.max(0.1, Math.min(1.3, phi - (e.touches[0].clientY - ly) * 0.005));
       lx = e.touches[0].clientX; ly = e.touches[0].clientY;
     };
     cvs.addEventListener("touchstart", handleTouchStart, { passive: true });
@@ -362,7 +395,8 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
     // ── Animation loop ──
     const clock = new THREE.Clock();
     renderer.setAnimationLoop(() => {
-      const t = clock.getElapsedTime();
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
 
       // Pending rebuild
       if (sceneRef.current.pendingRebuild) {
@@ -379,12 +413,60 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         sceneRef.current.focusId = null;
       }
 
+      // Keyboard navigation
+      const moveSpeed = keys.has("Shift") ? 8 : 5;
+      const step = moveSpeed * dt;
+      const forwardX = -Math.sin(theta);
+      const forwardZ = -Math.cos(theta);
+      const rightX = Math.cos(theta);
+      const rightZ = -Math.sin(theta);
+      let moveX = 0, moveZ = 0;
+      if (keys.has("w")) { moveX += forwardX; moveZ += forwardZ; }
+      if (keys.has("s")) { moveX -= forwardX; moveZ -= forwardZ; }
+      if (keys.has("d")) { moveX += rightX; moveZ += rightZ; }
+      if (keys.has("a")) { moveX -= rightX; moveZ -= rightZ; }
+      const moveLen = Math.sqrt(moveX * moveX + moveZ * moveZ);
+      if (moveLen > 0) {
+        gx += (moveX / moveLen) * step;
+        gz += (moveZ / moveLen) * step;
+      }
+      const rotateStep = 1.4 * dt;
+      if (keys.has("ArrowLeft")) theta -= rotateStep;
+      if (keys.has("ArrowRight")) theta += rotateStep;
+      if (keys.has("ArrowUp")) theta = inter(theta, 0, 0.08);
+      if (keys.has("ArrowDown")) theta = inter(theta, Math.PI, 0.08);
+
+      // Camera mode
+      const targetMode = CAMERA_ANGLE[sceneRef.current.cameraMode || "angle"] || CAMERA_ANGLE.angle;
+      phi = inter(phi, targetMode.phi, 0.08);
+      radius = inter(radius, targetMode.radius, 0.04);
+
       // Camera
       tx += (gx - tx) * 0.04; tz += (gz - tz) * 0.04;
       camera.position.x = tx + Math.sin(theta) * Math.cos(phi) * radius;
       camera.position.y = Math.sin(phi) * radius * 0.6 + 2;
       camera.position.z = tz + Math.cos(theta) * Math.cos(phi) * radius;
       camera.lookAt(tx, 0, tz);
+
+      // Center cursor hit test
+      let nextCursorHit = null;
+      let nextCursorDist = Infinity;
+      Object.entries(meshMap).forEach(([id, { node }]) => {
+        if (!node) return;
+        const dx = node.x - tx;
+        const dz = node.z - tz;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < CURSOR_SELECT_RADIUS && dist < nextCursorDist) {
+          nextCursorHit = id;
+          nextCursorDist = dist;
+        }
+      });
+      if (nextCursorHit !== cursorHitId) {
+        cursorHitId = nextCursorHit;
+        sceneRef.current.cursorHitId = cursorHitId;
+        const node = cursorHitId ? meshMap[cursorHitId]?.node : null;
+        setCursorInfo?.(node ? { id: node.id, name: node.name } : null);
+      }
 
       // Node animation
       const selId = sceneRef.current.selectedId;
@@ -407,7 +489,8 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         mat.emissiveIntensity = ei;
         if (rim?.material) {
           const targetOpacity = phase === "hidden" ? 0.08 : phase === "broken" ? 0.48 : phase === "declining" ? 0.28 : phase === "rising" ? 0.34 : 0.2;
-          rim.material.opacity = inter(rim.material.opacity, id === selId ? Math.max(targetOpacity, 0.45) : targetOpacity, 0.05);
+          const activeTarget = id === cursorHitId ? 0.62 : id === selId ? Math.max(targetOpacity, 0.45) : targetOpacity;
+          rim.material.opacity = inter(rim.material.opacity, activeTarget, 0.05);
         }
         if (!draggingNode || draggingNode !== id) {
           marker.position.y = 0.4 + spiritus(t + node.x, 0.12, 0.02);
@@ -442,6 +525,8 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
       if (cvs.parentNode) cvs.parentNode.removeChild(cvs);
       window.removeEventListener("resize", onR);
       window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("touchend", handleTouchEnd);
       window.removeEventListener("touchmove", handleTouchMove);
     };

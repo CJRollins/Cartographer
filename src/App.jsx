@@ -31,6 +31,8 @@ export default function App() {
   const [confirmDel, setConfirmDel] = useState(null);
   const [log, setLog] = useState(["The void awaits. Name your first location."]);
   const [hoverInfo, setHoverInfo] = useState(null);
+  const [cursorInfo, setCursorInfo] = useState(null);
+  const [cameraMode, setCameraMode] = useState("angle");
 
   // ── Derived ──
   const selectedNode = nodes.find(n => n.id === selected);
@@ -68,6 +70,7 @@ export default function App() {
   // ── Sync to scene ref ──
   useEffect(() => { sceneRef.current.selectedId = selected; }, [selected]);
   useEffect(() => { sceneRef.current._edges = edges; }, [edges]);
+  useEffect(() => { sceneRef.current.cameraMode = cameraMode; }, [cameraMode]);
 
   // ═══ MUTATIONS ═══
   const createNode = useCallback((name, atmo, parentId) => {
@@ -231,7 +234,7 @@ export default function App() {
     <div style={{ width: "100%", height: "100vh", display: "flex", background: "#06040a", overflow: "hidden" }}>
       {/* 3D Scene */}
       <div ref={mountRef} style={{ flex: 1, position: "relative" }}>
-        <CartographerScene mountRef={mountRef} sceneRef={sceneRef} setSelected={setSelected} setNodes={setNodes} setHoverInfo={setHoverInfo} />
+        <CartographerScene mountRef={mountRef} sceneRef={sceneRef} setSelected={setSelected} setNodes={setNodes} setHoverInfo={setHoverInfo} setCursorInfo={setCursorInfo} />
 
         {/* Overlay: title + stats */}
         <div style={{ position: "absolute", top: 12, left: 16, pointerEvents: "none", userSelect: "none" }}>
@@ -272,9 +275,41 @@ export default function App() {
           </div>
         )}
 
+        {/* Overlay: center cursor */}
+        <div style={{
+          position: "absolute", left: "50%", top: "50%", width: 34, height: 34,
+          transform: "translate(-50%,-50%)", pointerEvents: "none", zIndex: 4,
+        }}>
+          <div style={{
+            position: "absolute", left: "50%", top: 0, bottom: 0, width: 1,
+            background: cursorInfo ? "rgba(212,182,110,0.85)" : "rgba(181,152,80,0.38)",
+            boxShadow: cursorInfo ? "0 0 8px rgba(212,182,110,0.5)" : "none",
+          }} />
+          <div style={{
+            position: "absolute", top: "50%", left: 0, right: 0, height: 1,
+            background: cursorInfo ? "rgba(212,182,110,0.85)" : "rgba(181,152,80,0.38)",
+            boxShadow: cursorInfo ? "0 0 8px rgba(212,182,110,0.5)" : "none",
+          }} />
+          <div style={{
+            position: "absolute", inset: 8, borderRadius: "50%",
+            border: cursorInfo ? "1px solid rgba(212,182,110,0.9)" : "1px solid rgba(181,152,80,0.3)",
+          }} />
+        </div>
+
+        {cursorInfo && (
+          <div style={{
+            position: "absolute", left: "50%", top: "calc(50% + 28px)",
+            transform: "translateX(-50%)", pointerEvents: "none", zIndex: 4,
+            fontFamily: FONT_MONO, fontSize: 9, color: "#D4B66E",
+            background: "rgba(8,6,10,0.8)", border: BORDER, borderRadius: 3, padding: "3px 8px",
+          }}>
+            {cursorInfo.name} · Enter
+          </div>
+        )}
+
         {/* Overlay: controls hint */}
         <div style={{ position: "absolute", bottom: 10, left: 16, fontFamily: FONT_MONO, fontSize: 8, color: "#3a3530", pointerEvents: "none" }}>
-          drag node to reposition · click empty to deselect · Tab cycles · Ctrl+Z undo
+          WASD pans · arrows rotate · Enter selects cursor · drag selected node to reposition
         </div>
       </div>
 
@@ -302,6 +337,26 @@ export default function App() {
         <Layer0AuditPanel nodes={nodes} edges={edges} />
         <ShortcutsPanel />
         <ConsolePanel log={log} />
+        <div style={{
+          position: "sticky", bottom: 0, display: "flex", justifyContent: "flex-end", gap: 4,
+          padding: "8px 12px", borderTop: BORDER, background: PANEL_BG,
+        }}>
+          {[
+            ["top", "Top Down"],
+            ["angle", "45 Degree"],
+          ].map(([modeId, label]) => (
+            <button key={modeId} onClick={() => setCameraMode(modeId)}
+              style={{
+                padding: "5px 8px", borderRadius: 3, cursor: "pointer",
+                border: cameraMode === modeId ? "1px solid rgba(212,182,110,0.7)" : BORDER,
+                background: cameraMode === modeId ? "rgba(212,182,110,0.12)" : "rgba(181,152,80,0.05)",
+                color: cameraMode === modeId ? "#D4B66E" : "#b59850",
+                fontFamily: FONT_MONO, fontSize: 9,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

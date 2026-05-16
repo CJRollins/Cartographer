@@ -2,6 +2,9 @@ import React from 'react';
 import { ATMOS, TEMPORAL_PHASES, FONT_MONO, BORDER } from '../constants.js';
 
 const SHORTCUTS = [
+  "WASD — move map cursor",
+  "Arrow keys — rotate view",
+  "Enter — select cursor location",
   "N — focus name input",
   "R — rename selected",
   "C — connect from selected",
