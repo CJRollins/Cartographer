@@ -145,13 +145,14 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         const col = new THREE.Color(atmoHex(node.atmosphere));
         const isOrphan = !data.edges.some(e => e.from === node.id || e.to === node.id);
         const degCount = data.edges.filter(e => e.from === node.id || e.to === node.id).length;
+        const baseY = Number.isFinite(node.y) ? node.y : 0;
         const sz = 0.15 + Math.min(degCount * 0.015, 0.08);
 
         // Platform
         const platGeo = new THREE.CylinderGeometry(0.75 + degCount * 0.04, 0.8 + degCount * 0.04, 0.08, 24);
         const platMat = new THREE.MeshStandardMaterial({ color: col, metalness: 0.5, roughness: 0.4, transparent: true, opacity: isOrphan ? 0.15 : 0.3 });
         const plat = new THREE.Mesh(platGeo, platMat);
-        plat.position.set(node.x, -0.04, node.z);
+        plat.position.set(node.x, baseY - 0.04, node.z);
         worldGroup.add(plat);
 
         // Rim
@@ -160,19 +161,19 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
           new THREE.MeshBasicMaterial({ color: isOrphan ? 0x8c1f18 : col, transparent: true, opacity: isOrphan ? 0.4 : 0.2 })
         );
         rim.rotation.x = Math.PI / 2;
-        rim.position.set(node.x, 0, node.z);
+        rim.position.set(node.x, baseY, node.z);
         worldGroup.add(rim);
 
         // Label
         const label = createNodeLabel(node.name, col.getStyle());
-        label.position.set(node.x, 0.055, node.z);
+        label.position.set(node.x, baseY + 0.055, node.z);
         worldGroup.add(label);
 
         // Marker
         const mGeo = new THREE.SphereGeometry(sz, 12, 8);
         const mMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.3, metalness: 0.4, roughness: 0.3 });
         const marker = new THREE.Mesh(mGeo, mMat);
-        marker.position.set(node.x, 0.4, node.z);
+        marker.position.set(node.x, baseY + 0.4, node.z);
         worldGroup.add(marker);
 
         meshMap[node.id] = { marker, mat: mMat, plat, platMat, rim, label, node, isOrphan };
@@ -185,9 +186,11 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         if (!from || !to) return;
 
         const isDescent = e.type === "descent" || e.type === "tunnel";
+        const fromY = Number.isFinite(from.y) ? from.y : 0;
+        const toY = Number.isFinite(to.y) ? to.y : 0;
         const pts = isDescent
-          ? [new THREE.Vector3(from.x, 0.1, from.z), new THREE.Vector3((from.x + to.x) / 2, -0.5, (from.z + to.z) / 2), new THREE.Vector3(to.x, 0.1, to.z)]
-          : [new THREE.Vector3(from.x, 0.1, from.z), new THREE.Vector3(to.x, 0.1, to.z)];
+          ? [new THREE.Vector3(from.x, fromY + 0.1, from.z), new THREE.Vector3((from.x + to.x) / 2, Math.min(fromY, toY) - 0.5, (from.z + to.z) / 2), new THREE.Vector3(to.x, toY + 0.1, to.z)]
+          : [new THREE.Vector3(from.x, fromY + 0.1, from.z), new THREE.Vector3(to.x, toY + 0.1, to.z)];
 
         const lc = CONN_COLORS[e.type] || 0xb59850;
         const geo = new THREE.BufferGeometry().setFromPoints(pts);
@@ -207,13 +210,14 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
         // Blocked marker
         if (e.type === "blocked") {
           const mx = (from.x + to.x) / 2, mz = (from.z + to.z) / 2;
+          const my = (fromY + toY) / 2 + 0.2;
           const bs = 0.12;
           const arm1 = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(mx - bs, 0.2, mz - bs), new THREE.Vector3(mx + bs, 0.2, mz + bs)]),
+            new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(mx - bs, my, mz - bs), new THREE.Vector3(mx + bs, my, mz + bs)]),
             new THREE.LineBasicMaterial({ color: 0xaa3333, linewidth: 2 })
           );
           const arm2 = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(mx + bs, 0.2, mz - bs), new THREE.Vector3(mx - bs, 0.2, mz + bs)]),
+            new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(mx + bs, my, mz - bs), new THREE.Vector3(mx - bs, my, mz + bs)]),
             new THREE.LineBasicMaterial({ color: 0xaa3333, linewidth: 2 })
           );
           worldGroup.add(arm1, arm2);
@@ -221,7 +225,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
             new THREE.OctahedronGeometry(0.06, 0),
             new THREE.MeshStandardMaterial({ color: 0xaa3333, emissive: 0xaa3333, emissiveIntensity: 0.5 })
           );
-          blockDot.position.set(mx, 0.2, mz);
+          blockDot.position.set(mx, my, mz);
           worldGroup.add(blockDot);
         }
       });
@@ -493,7 +497,7 @@ export default function CartographerScene({ mountRef, sceneRef, setSelected, set
           rim.material.opacity = inter(rim.material.opacity, activeTarget, 0.05);
         }
         if (!draggingNode || draggingNode !== id) {
-          marker.position.y = 0.4 + spiritus(t + node.x, 0.12, 0.02);
+          marker.position.y = (Number.isFinite(node.y) ? node.y : 0) + 0.4 + spiritus(t + node.x, 0.12, 0.02);
         }
       });
 

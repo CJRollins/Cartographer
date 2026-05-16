@@ -35,6 +35,7 @@ export function normalizeAdventure(data = {}) {
         x: num(node?.x, index * 2),
         y: num(node?.y, 0),
         z: num(node?.z, 0),
+        layer: Math.round(num(node?.y, 0)),
         notes: typeof node?.notes === "string" ? node.notes : "",
         created: num(node?.created, Date.now()),
         temporal: normalizeTemporal(node?.temporal),
@@ -55,6 +56,7 @@ export function normalizeAdventure(data = {}) {
         to: edge.to,
         type: VALID_CONN_TYPES.has(edge?.type) ? edge.type : "path",
         label: typeof edge?.label === "string" ? edge.label : "",
+        travelLength: num(edge?.travelLength, 0),
       });
       return safeEdges;
     }, [])

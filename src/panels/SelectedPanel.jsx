@@ -11,11 +11,13 @@ import {
   BORDER,
   INPUT_STYLE,
 } from '../constants.js';
+import { directionBetween, spatialDistance } from '../topology.js';
 
 export default function SelectedPanel({
   node, edges, nodes, selected,
   renaming, setRenaming, renameBuf, setRenameBuf, onRename,
-  onUpdateAtmo, onUpdateNotes, onUpdateTemporal, onEditConnType, onRemoveConnection,
+  onUpdateAtmo, onUpdateNotes, onUpdateTemporal, onUpdateSpatial, onEditConnType, onRemoveConnection,
+  onUpdateConnectionTravel,
   onSelectNode, onStartConnect, onConfirmDelete, sceneRef,
 }) {
   const renameRef = useRef(null);
@@ -23,6 +25,7 @@ export default function SelectedPanel({
 
   const isOrphan = !edges.length;
   const temporal = { ...DEFAULT_TEMPORAL, ...(node.temporal || {}) };
+  const elevation = Number.isFinite(node.y) ? node.y : 0;
 
   const btn = (label, action, opts = {}) => (
     <button onClick={action} disabled={opts.disabled} style={{
@@ -88,6 +91,30 @@ export default function SelectedPanel({
         </div>
       </div>
 
+      {/* Spatial placement */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 4 }}>
+          LAYER 1 · SPATIAL PLACEMENT
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5 }}>
+          {[
+            ["X", node.x || 0, "x"],
+            ["Y", elevation, "y"],
+            ["Z", node.z || 0, "z"],
+          ].map(([label, value, key]) => (
+            <label key={key}>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: "#5a4e38", marginBottom: 3 }}>{label}</div>
+              <input type="number" step="0.5" value={Number(value).toFixed(1)}
+                onChange={e => onUpdateSpatial(selected, { [key]: Number(e.target.value) })}
+                style={{ ...INPUT_STYLE, fontSize: 9, padding: "3px 5px" }} />
+            </label>
+          ))}
+        </div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 8, color: elevation > 0 ? "#5DCAA5" : elevation < 0 ? "#F0997B" : "#5a4e38", marginTop: 4 }}>
+          {elevation > 0 ? `height +${elevation.toFixed(1)}` : elevation < 0 ? `depth ${elevation.toFixed(1)}` : "surface level"}
+        </div>
+      </div>
+
       {/* Connections */}
       {edges.length > 0 && (
         <div style={{ marginTop: 8 }}>
@@ -97,16 +124,24 @@ export default function SelectedPanel({
           {edges.map((e, i) => {
             const oid = e.from === selected ? e.to : e.from;
             const other = nodes.find(n => n.id === oid);
+            const direction = directionBetween(node, other);
+            const derivedLength = spatialDistance(node, other);
+            const travelLength = Number(e.travelLength) > 0 ? Number(e.travelLength) : derivedLength;
             return (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 72px 48px 14px", gap: 4, alignItems: "center", marginBottom: 5 }}>
                 <span onClick={() => { onSelectNode(oid); sceneRef.current.focusId = oid; }}
                   style={{ cursor: "pointer", fontFamily: FONT_MONO, fontSize: 10, color: "#b59850", flex: 1 }}>
                   → {other?.name}
+                  <span style={{ display: "block", fontSize: 8, color: "#5a4e38" }}>{direction} · {derivedLength.toFixed(1)}u</span>
                 </span>
                 <select value={e.type} onChange={ev => onEditConnType(e.from, e.to, ev.target.value)}
                   style={{ background: "#0a0806", border: BORDER, color: "#b59850", fontFamily: FONT_MONO, fontSize: 8, padding: "1px 3px" }}>
                   {CONN_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
                 </select>
+                <input type="number" min="0" step="0.5" title="Authored travel length"
+                  value={travelLength.toFixed(1)}
+                  onChange={ev => onUpdateConnectionTravel(e.from, e.to, ev.target.value)}
+                  style={{ width: 48, background: "#0a0806", border: BORDER, color: "#D4B66E", fontFamily: FONT_MONO, fontSize: 8, padding: "2px 3px", boxSizing: "border-box" }} />
                 <span onClick={() => onRemoveConnection(e.from, e.to)}
                   style={{ cursor: "pointer", color: "#8c1f18", fontSize: 11, padding: "0 2px" }} title="Remove connection">✕</span>
               </div>

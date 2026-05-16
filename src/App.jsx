@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { DEFAULT_TEMPORAL, FONT_SERIF, FONT_MONO, BORDER, PANEL_BG, atmoColor } from './constants.js';
-import { makeId, placeNear, resetIdCounter } from './topology.js';
+import { makeId, placeNear, resetIdCounter, spatialDistance } from './topology.js';
 import { useHistory } from './useHistory.js';
 import { exportAdventure, importAdventure, saveToStorage, loadFromStorage, normalizeTemporal } from './io.js';
 import CartographerScene from './scene/CartographerScene.jsx';
@@ -83,14 +83,15 @@ export default function App() {
       name,
       atmosphere: atmo,
       x: pos.x,
-      y: 0,
+      y: pos.y,
       z: pos.z,
+      layer: Math.round(pos.y),
       notes: "",
       created: now,
       temporal: { ...DEFAULT_TEMPORAL, lastChanged: now },
     };
     const nn = [...nodes, node];
-    const ne = parentId ? [...edges, { from: parentId, to: node.id, type: connType }] : [...edges];
+    const ne = parentId ? [...edges, { from: parentId, to: node.id, type: connType, travelLength: spatialDistance(parent, node) }] : [...edges];
     setNodes(nn); setEdges(ne); setSelected(node.id); setNewName("");
     addLog(`+ ${name} [${atmo}]${parentId ? ` ← ${connType} → ${nodes.find(n => n.id === parentId)?.name}` : ""}`);
     sceneRef.current.pendingRebuild = { nodes: nn, edges: ne };
@@ -118,6 +119,18 @@ export default function App() {
     setNodes(ns => ns.map(n => n.id === id ? { ...n, notes } : n));
   }, []);
 
+  const updateSpatial = useCallback((id, patch) => {
+    pushHistory();
+    const nn = nodes.map(n => {
+      if (n.id !== id) return n;
+      const y = patch.y !== undefined ? Number(patch.y) : n.y;
+      return { ...n, ...patch, y: Number.isFinite(y) ? y : n.y, layer: Math.round(Number.isFinite(y) ? y : n.y || 0) };
+    });
+    setNodes(nn);
+    addLog(`◇ ${nodes.find(n => n.id === id)?.name} spatial placement updated`);
+    sceneRef.current.pendingRebuild = { nodes: nn, edges };
+  }, [nodes, edges, pushHistory]);
+
   const updateTemporal = useCallback((id, patch) => {
     pushHistory();
     const nn = nodes.map(n => n.id === id
@@ -133,7 +146,9 @@ export default function App() {
     if (fromId === toId) return;
     if (edges.find(e => (e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId))) { addLog("Already connected."); return; }
     pushHistory();
-    const ne = [...edges, { from: fromId, to: toId, type }];
+    const from = nodes.find(n => n.id === fromId);
+    const to = nodes.find(n => n.id === toId);
+    const ne = [...edges, { from: fromId, to: toId, type, travelLength: spatialDistance(from, to) }];
     setEdges(ne); setConnectFrom(null); setMode("create");
     addLog(`⟷ ${nodes.find(n => n.id === fromId)?.name} ← ${type} → ${nodes.find(n => n.id === toId)?.name}`);
     sceneRef.current.pendingRebuild = { nodes, edges: ne };
@@ -151,6 +166,14 @@ export default function App() {
     pushHistory();
     const ne = edges.map(e => ((e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId)) ? { ...e, type: newType } : e);
     setEdges(ne); addLog(`⟷ Connection → ${newType}`);
+    sceneRef.current.pendingRebuild = { nodes, edges: ne };
+  }, [nodes, edges, pushHistory]);
+
+  const updateConnectionTravel = useCallback((fromId, toId, travelLength) => {
+    pushHistory();
+    const safeLength = Math.max(0, Number(travelLength) || 0);
+    const ne = edges.map(e => ((e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId)) ? { ...e, travelLength: safeLength } : e);
+    setEdges(ne); addLog(`⟷ Travel length → ${safeLength.toFixed(1)}`);
     sceneRef.current.pendingRebuild = { nodes, edges: ne };
   }, [nodes, edges, pushHistory]);
 
@@ -321,8 +344,9 @@ export default function App() {
           node={selectedNode} edges={selectedEdges} nodes={nodes} selected={selected}
           renaming={renaming} setRenaming={setRenaming} renameBuf={renameBuf} setRenameBuf={setRenameBuf}
           onRename={renameNode} onUpdateAtmo={updateAtmo} onUpdateNotes={updateNotes}
-          onUpdateTemporal={updateTemporal}
+          onUpdateTemporal={updateTemporal} onUpdateSpatial={updateSpatial}
           onEditConnType={editConnType} onRemoveConnection={removeConnection}
+          onUpdateConnectionTravel={updateConnectionTravel}
           onSelectNode={setSelected} onStartConnect={startConnect} onConfirmDelete={setConfirmDel}
           sceneRef={sceneRef}
         />
